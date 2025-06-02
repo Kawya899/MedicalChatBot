@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Medical Chatbot</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #eef2f3;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #2c3e50;
+        }
+
+        #chat-container {
+            width: 90%;
+            max-width: 600px;
+            background: #fff;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        #chatbox {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 5px;
+            background: #fafafa;
+        }
+
+        .message {
+            margin: 10px 0;
+            padding: 10px 15px;
+            border-radius: 15px;
+            max-width: 75%;
+            clear: both;
+        }
+
+        .user {
+            background: #d0ebff;
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .bot {
+            background: #e6f4ea;
+            margin-right: auto;
+            text-align: left;
+        }
+
+        #typing {
+            font-style: italic;
+            color: #888;
+            padding: 5px;
+            display: none;
+        }
+
+        #input-area {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+        }
+
+        #inputBox {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        #sendBtn {
+            padding: 10px 20px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        #sendBtn:hover {
+            background: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <h1>🩺 Interactive Medical Chatbot</h1>
+    <div id="chat-container">
+        <div id="chatbox"></div>
+        <div id="typing">Bot is typing...</div>
+        <div id="input-area">
+            <input type="text" id="inputBox" placeholder="Type your message..." onkeypress="checkEnter(event)" />
+            <button id="sendBtn" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+    function checkEnter(event) {
+        if (event.key === "Enter") sendMessage();
+    }
+
+    function appendMessage(text, sender) {
+        const chatbox = document.getElementById("chatbox");
+        const messageDiv = document.createElement("div");
+        messageDiv.className = "message " + sender;
+        messageDiv.innerHTML = `<strong>${sender === 'user' ? 'You' : 'Bot'}:</strong><br>${text}`;
+        chatbox.appendChild(messageDiv);
+        chatbox.scrollTop = chatbox.scrollHeight;
+
+        if (sender === "bot") {
+            speakText(text);
+        }
+    }
+
+    function sendMessage() {
+        const inputBox = document.getElementById("inputBox");
+        const message = inputBox.value.trim();
+        if (!message) return;
+
+        appendMessage(message, "user");
+        inputBox.value = "";
+
+        document.getElementById("typing").style.display = "block";
+
+        fetch("/chat", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: `message=${encodeURIComponent(message)}`
+        })
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById("typing").style.display = "none";
+            appendMessage(data.response, "bot");
+        })
+        .catch(err => {
+            document.getElementById("typing").style.display = "none";
+            appendMessage("Sorry, something went wrong.", "bot");
+            console.error(err);
+        });
+    }
+
+    // 🗣️ Text-to-Speech function
+    function speakText(text) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "en-US"; // or change to "en-GB" if preferred
+        speechSynthesis.speak(utterance);
+    }
+</script>
+
+</body>
+</html>
