@@ -1,39 +1,42 @@
 from flask import Flask, render_template, request, jsonify
 import google.generativeai as genai
+import sqlite3
 
 app = Flask(__name__)
 
-# Set your Gemini API key
-genai.configure(api_key="AIzaSyA6onp0ZGmHyb9Z32q3pQ-CL3Z6IJ6h7K0")  # Replace with your real API key
+# Configure Gemini API key (replace with your real key)
+genai.configure(api_key="AIzaSyA6onp0ZGmHyb9Z32q3pQ-CL3Z6IJ6h7K0")
 
-# Dictionary of disease keywords to doctors info
-doctors_db = {
-    "hypertension": [
-        {"name": "Dr. John Smith", "specialty": "Cardiologist", "contact": "john.smith@hospital.com, +123456789"},
-        {"name": "Dr. Emma Lee", "specialty": "Internal Medicine", "contact": "emma.lee@clinic.com, +987654321"}
-    ],
-    "diabetes": [
-        {"name": "Dr. Alice Brown", "specialty": "Endocrinologist", "contact": "alice.brown@hospital.com, +111222333"},
-        {"name": "Dr. Michael Green", "specialty": "Diabetologist", "contact": "michael.green@clinic.com, +444555666"}
-    ],
-    # Add more diseases and doctor lists here (up to 30)
-    # ...
-}
+def get_db_connection():
+    conn = sqlite3.connect('medical_chatbot.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def find_doctors(disease):
-    disease = disease.lower()
-    for key in doctors_db:
-        if key in disease:
-            return doctors_db[key]
-    return None
+def get_doctors_by_disease(disease):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    query = """
+        SELECT name, specialty, contact 
+        FROM doctors 
+        WHERE LOWER(disease_tag) LIKE ?
+    """
+    cur.execute(query, ('%' + disease.lower() + '%',))
+    doctors = cur.fetchall()
+    conn.close()
+    return doctors
 
-def format_doctors_info(doctors_list):
-    if not doctors_list:
-        return ""
-    info = "\n\nYou may also consider consulting these specialist doctors:\n"
-    for doc in doctors_list:
-        info += f"- {doc['name']} ({doc['specialty']}), Contact: {doc['contact']}\n"
-    return info
+def get_disease_info(disease):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    query = """
+        SELECT description, food_suggestions 
+        FROM disease_info 
+        WHERE LOWER(disease_name) = ?
+    """
+    cur.execute(query, (disease.lower(),))
+    data = cur.fetchone()
+    conn.close()
+    return data
 
 def shorten_reply(text, max_length=600):
     if len(text) > max_length:
@@ -46,35 +49,74 @@ def index():
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    user_input = request.form['message']
+    user_input = request.form['message'].strip()
+    disease_keyword = user_input.lower()
 
-    prompt = f"""You are a medical chatbot. A user will type in a disease or symptom.
-You will:
-- Suggest the best foods to manage it.
-- Explain simply and briefly why each food is beneficial (keep the answer under 150 words).
-- Answer follow-up questions clearly and simply.
+    disease_info = get_disease_info(disease_keyword)
+    doctors = get_doctors_by_disease(disease_keyword)
 
-User: {user_input}
+    disease_text = ""
+    if disease_info:
+        disease_text += f"Disease Description: {disease_info['description']}\n"
+        disease_text += f"Food Suggestions: {disease_info['food_suggestions']}\n"
+
+    if doctors:
+        disease_text += "Specialist doctors:\n"
+        for doc in doctors:
+            disease_text += f"- {doc['name']} ({doc['specialty']}), Contact: {doc['contact']}\n"
+
+    prompt = f"""You are a helpful medical chatbot. The user provided this input:
+\"\"\"{user_input}\"\"\"
+
+Here is some known info about the disease and doctors:
+{disease_text}
+
+Based on this info, suggest the best foods to manage the condition, explain why they are good (keep under 150 words), and respond clearly and simply.
+
 Bot:"""
 
-    if "hypertension" in user_input.lower():
-        reply = "Foods like bananas, spinach, and oats are helpful in managing hypertension. They are rich in potassium and fiber, which help lower blood pressure."
-        reply += format_doctors_info(doctors_db["hypertension"])
-
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')  # or 'gemini-1.5-pro'
+        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
-        reply = shorten_reply(response.text)
+        ai_reply = shorten_reply(response.text)
 
-        # Check for matching doctors
-        doctors_list = find_doctors(user_input)
-        if doctors_list:
-            reply += format_doctors_info(doctors_list)
+        ai_reply_html = "<p>" + ai_reply.replace('\n', '<br>') + "</p>"
+        disease_html = (
+            f"<p><strong>Disease Info:</strong> {disease_info['description']}<br>"
+            f"<strong>Food Suggestions:</strong> {disease_info['food_suggestions']}</p>"
+            if disease_info else ""
+        )
+        doctors_html = (
+            "<br><br><strong>Here are some specialist doctors you may consider.</strong>"
+            if doctors else ""
+        )
 
-        return jsonify({'response': reply})
+        final_reply_html = ai_reply_html + disease_html + doctors_html
+
+        conn = get_db_connection()
+        conn.execute(
+            "INSERT INTO conversations (user_id, user_message, bot_response) VALUES (?, ?, ?)",
+            (1, user_input, final_reply_html)
+        )
+        conn.commit()
+        conn.close()
+
+        return jsonify({'response': final_reply_html})
 
     except Exception as e:
-        return jsonify({'response': 'Error: ' + str(e)})
+        return jsonify({'response': f"<p><strong>Error occurred:</strong> {str(e)}</p>"})
+
+# New route to fetch doctor details separately
+@app.route('/doctors')
+def doctors():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT name, specialty, contact FROM doctors")
+    doctors = cur.fetchall()
+    conn.close()
+
+    doctors_list = [dict(doc) for doc in doctors]
+    return jsonify({'doctors': doctors_list})
 
 if __name__ == '__main__':
     app.run(debug=True)
